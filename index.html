@@ -418,7 +418,7 @@ async function loadETData(){
     if(!file) throw new Error('Keine Datei');
     fileId=file.id;
     document.getElementById('info-file').textContent='📁 '+file.name;
-    const range=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+ET_SHEET+'/range(address=\'A'+FIRST_ROW+':P500\')');
+    const range=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+ET_SHEET+'/range(address=\'A'+FIRST_ROW+':P5000\')');
     etData={}; let count=0;
     if(range.values){
       for(let i=0;i<range.values.length;i++){
@@ -584,7 +584,7 @@ async function buchen(){
   let liveRow=currentET.row;
   showLoading('Speichere…');
   try{
-    const range=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+ET_SHEET+'/range(address=\'A'+FIRST_ROW+':A500\')');
+    const range=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+ET_SHEET+'/range(address=\'A'+FIRST_ROW+':A5000\')');
     if(range.values) for(let i=0;i<range.values.length;i++){
       if(String(range.values[i][0]||'').trim().toUpperCase()===currentET.nr.toUpperCase()){liveRow=i+FIRST_ROW;break;}
     }
