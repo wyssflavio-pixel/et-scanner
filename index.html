@@ -841,10 +841,10 @@ function goTab(t){
   if(t==='hist') renderHist();
 }
 function histZeile(b){
-  const ex=b.quelle==='Excel'||(b.art!=='Abgang'&&b.art!=='Zugang');
+  const ex=(b.art!=='Abgang'&&b.art!=='Zugang');
   const delta=ex?('= '+esc(b.nachher)):((b.art==='Abgang'?'−':'+')+esc(b.menge));
   const kl=ex?'xl':(b.art==='Abgang'?'out':'in');
-  const best=ex?'in Excel geändert':(esc(b.vorher)+' → '+esc(b.nachher));
+  const best=ex?'in Excel geändert':(esc(b.vorher)+' → '+esc(b.nachher)+(b.quelle==='Excel'?' (Excel)':''));
   return '<div class="hist-item"><div><div class="hist-nr">'+esc(b.nr)+'</div><div class="hist-bez">'+esc(b.bez)+'</div>'
     +'<div class="hist-time">'+esc(serialText(b.zeit))+' · '+esc(b.person||'–')+' · '+esc(b.bereich)+' · '+best+'</div></div>'
     +'<div class="hist-delta '+kl+'">'+delta+'</div></div>';
@@ -871,7 +871,7 @@ function zeigEtVerlauf(et){
   const liste=logRows.filter(b=>b.nr.toUpperCase()===String(et.nr).toUpperCase()).slice(0,5);
   if(!liste.length){ box.innerHTML=''; return; }
   box.innerHTML='<div class="card-title" style="margin:6px 0 4px;">Letzte Buchungen</div>'+liste.map(b=>{
-    const ex=b.quelle==='Excel'||(b.art!=='Abgang'&&b.art!=='Zugang');
+    const ex=(b.art!=='Abgang'&&b.art!=='Zugang');
     const d=ex?'= '+esc(b.nachher):((b.art==='Abgang'?'−':'+')+esc(b.menge));
     return '<div class="et-verlauf-z"><span>'+esc(serialText(b.zeit))+' · '+esc(b.person||'–')+'</span><b>'+d+'</b></div>';
   }).join('');
