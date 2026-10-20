@@ -61,6 +61,15 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
 .manual-row input{flex:1;padding:12px;border:1.5px solid #ddd;border-radius:10px;font-size:15px;outline:none;}
 .manual-row input:focus{border-color:var(--g2);}
 .manual-row button{padding:12px 16px;background:var(--g1);color:#fff;border:none;border-radius:10px;font-size:15px;cursor:pointer;font-weight:700;}
+.such-info{font-size:12px;color:#888;margin:2px 2px 8px;}
+.such-item{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#fff;border:1px solid #e6e6e6;border-radius:12px;padding:10px 12px;margin-bottom:8px;cursor:pointer;}
+.such-item:active{background:#f1f8f1;}
+.such-nr{font-size:14px;font-weight:800;color:var(--g1);}
+.such-bez{font-size:14px;color:#222;margin-top:1px;}
+.such-sub{font-size:11px;color:#888;margin-top:3px;line-height:1.5;}
+.such-best{text-align:center;min-width:54px;}
+.such-best b{display:block;font-size:20px;}
+.such-best small{font-size:10px;color:#999;}
 
 /* ET CARD */
 .et-nr{font-size:22px;font-weight:800;color:var(--g1);}
@@ -173,9 +182,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
           <div class="scanner-status" id="scan-status">Halte QR-Code in den Rahmen…</div>
         </div>
         <div class="manual-row">
-          <input type="text" id="manual-et" placeholder="ET-Nr manuell eingeben" />
+          <input type="text" id="manual-et" placeholder="ET-Nr oder Bezeichnung, z.B. dämpfer" oninput="sucheLive()" onkeydown="if(event.key==='Enter'){event.preventDefault();manualSearch();}" autocomplete="off" />
           <button onclick="manualSearch()">🔍</button>
         </div>
+        <div id="such-ergebnis"></div>
       </div>
 
       <!-- SEITE 2: ET + BUCHUNG -->
@@ -558,9 +568,91 @@ function processCode(qrData){
 function manualSearch(){
   const val=document.getElementById('manual-et').value.trim();
   if(!val) return;
+  // 1. genaue ET-Nummer (oder Artikelnummer) -> direkt öffnen
+  if(findeGenau(val)){
+    clearCooldown();
+    processCode(val);
+    document.getElementById('manual-et').value='';
+    document.getElementById('such-ergebnis').innerHTML='';
+    return;
+  }
+  // 2. sonst Suche nach Bezeichnung
+  zeigeTreffer(val);
+}
+
+// ── SUCHE NACH BEZEICHNUNG ──
+let suchTimer=null;
+function sucheLive(){
+  clearTimeout(suchTimer);
+  suchTimer=setTimeout(()=>{
+    const val=document.getElementById('manual-et').value.trim();
+    if(val.length<2){ document.getElementById('such-ergebnis').innerHTML=''; return; }
+    zeigeTreffer(val);
+  },250);
+}
+function findeGenau(val){
+  const u=val.trim().toUpperCase(), n=u.replace(/-/g,'');
+  if(etData[u]||etData[n]) return true;
+  const nums=u.replace(/[^0-9]/g,'');
+  if(/^(ET)?[-\s]?[0-9]{4,}$/.test(u)) for(const k of Object.keys(etData)){ if(k.replace(/[^0-9]/g,'')===nums) return true; }
+  for(const k of Object.keys(etData)){ const a=String(etData[k].artNr||'').toUpperCase().trim(); if(a&&a===u) return true; }
+  return false;
+}
+function normText(s){
+  return String(s||'').toLowerCase()
+    .replace(/ä/g,'a').replace(/ö/g,'o').replace(/ü/g,'u').replace(/ß/g,'ss')
+    .replace(/ae/g,'a').replace(/oe/g,'o').replace(/ue/g,'u')
+    .replace(/[^a-z0-9]/g,'');
+}
+function alleTeile(){ return [...new Set(Object.values(etData))]; }
+function suchTeile(query){
+  const woerter=String(query||'').split(/\s+/).map(normText).filter(w=>w.length>0);
+  if(!woerter.length) return {treffer:[],aehnlich:false};
+  const teile=alleTeile().map(et=>{
+    const felder=[et.nr,et.bez,et.anlage,et.hersteller,et.lieferant,et.artNr,et.lagerplatz];
+    return {et, text:normText(felder.join(' ')), woerter:felder.join(' ').split(/[^A-Za-z0-9ÄÖÜäöüß]+/).map(normText).filter(w=>w.length>=4), bez:normText(et.bez)};
+  });
+  // genaue Suche: jedes Suchwort muss vorkommen
+  let treffer=teile.filter(t=>woerter.every(w=>t.text.includes(w)));
+  let aehnlich=false;
+  // ähnliche Suche: Wort aus der Liste steckt im Suchwort (z.B. "stossdämpfer" findet "Dämpfer")
+  if(!treffer.length){
+    treffer=teile.filter(t=>woerter.every(w=>t.text.includes(w)||(w.length>=5&&t.woerter.some(x=>w.includes(x)))));
+    aehnlich=treffer.length>0;
+  }
+  const erstes=woerter[0];
+  treffer.sort((a,b)=>{
+    const pa=a.bez.startsWith(erstes)?0:(a.bez.includes(erstes)?1:2);
+    const pb=b.bez.startsWith(erstes)?0:(b.bez.includes(erstes)?1:2);
+    return pa-pb || String(a.et.nr).localeCompare(String(b.et.nr));
+  });
+  return {treffer:treffer.map(t=>t.et),aehnlich};
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function zeigeTreffer(query){
+  const box=document.getElementById('such-ergebnis');
+  const {treffer,aehnlich}=suchTeile(query);
+  if(!treffer.length){ box.innerHTML='<div class="such-info">Keine Treffer für «'+esc(query)+'»</div>'; return; }
+  const max=50, liste=treffer.slice(0,max);
+  let html='<div class="such-info">'+treffer.length+(treffer.length===1?' Treffer':' Treffer')+(aehnlich?' (ähnliche Begriffe)':'')+(treffer.length>max?', die ersten '+max+' angezeigt':'')+'</div>';
+  liste.forEach((et,i)=>{
+    const kl=et.ist===0?'crit':(et.ist<=et.min?'warn':'ok');
+    html+='<div class="such-item" onclick="oeffneTreffer('+i+')">'
+      +'<div><div class="such-nr">'+esc(et.nr)+'</div><div class="such-bez">'+esc(et.bez||'Ohne Bezeichnung')+'</div>'
+      +'<div class="such-sub">'+esc(bereichVon(et.sheet))+(et.anlage?' · '+esc(et.anlage):'')+'<br>📦 '+esc(et.lagerort||'–')+' / '+esc(et.lagerplatz||'–')+'</div></div>'
+      +'<div class="such-best"><b class="'+kl+'">'+esc(et.ist)+'</b><small>'+esc(et.einheit||'Stk')+'</small></div></div>';
+  });
+  box.innerHTML=html;
+  window._suchListe=liste;
+}
+function oeffneTreffer(i){
+  const et=(window._suchListe||[])[i]; if(!et) return;
+  if(codeReader){try{codeReader.reset();}catch(e){} codeReader=null;}
   clearCooldown();
-  processCode(val);
+  currentET=et; menge=1; buchTyp='abgang';
   document.getElementById('manual-et').value='';
+  document.getElementById('such-ergebnis').innerHTML='';
+  zeigET(et);
 }
 
 function zeigET(et){
