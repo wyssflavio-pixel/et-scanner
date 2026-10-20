@@ -132,7 +132,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
 <div class="header">
   <div>
     <div class="header-title">📦 ET-Scanner</div>
-    <div class="header-sub">Tschopp Holzindustrie AG</div>
+    <div class="header-sub">Tschopp Holzindustrie AG<span id="test-badge" style="display:none;margin-left:8px;background:#E65100;color:#fff;border-radius:6px;padding:1px 6px;font-weight:700;">TEST</span></div>
   </div>
   <div class="user-badge" id="user-badge">👤 <span id="user-name">–</span></div>
 </div>
@@ -263,11 +263,14 @@ const SP_HOSTNAME = 'tschoppag.sharepoint.com';
 const SP_SITE_PATH = '/sites/Instandhaltung';
 const SP_FOLDER_PATH = '/Instandhaltung/ET-Liste';
 const SP_FILENAME = 'ET-Liste_Tschopp_Final V2.xlsm';
-const ET_SHEET = 'ET-Liste';
+const ET_SHEET = 'ET-Liste';      // Hauptblatt Plattenwerk (Rückfall, falls keine Blattliste kommt)
+const ET_SHEET_PREFIX = 'ET-';     // alle Blätter, deren Name so beginnt, werden gelesen
 const FIRST_ROW = 5;
-const MAIL_TO = 'flavio.wyss@tschopp.swiss';
-const MAIL_CC = 'christopher.nagel@tschopp.swiss';
+const MAIL_TO = 'christopher.nagel@tschopp.swiss';  // nur falls im Blatt "Mail-Empfänger" nichts steht
+const MAIL_CC = '';
+const MAIL_SHEET = 'Mail-Empfänger';               // Blatt mit Empfängern pro Bereich
 const REDIRECT = window.location.origin + window.location.pathname;
+document.addEventListener('DOMContentLoaded',()=>{ if(window.location.pathname.indexOf('/test/')>=0){ const b=document.getElementById('test-badge'); if(b) b.style.display='inline'; } });
 
 const msalConfig = {
   auth:{ clientId:CLIENT_ID, authority:'https://login.microsoftonline.com/'+TENANT_ID, redirectUri:REDIRECT },
@@ -280,6 +283,7 @@ let token='', siteId='', driveId='', fileId='';
 let userEmail='', userName='';
 let currentET=null, menge=1, buchTyp='abgang';
 let etData={}, bookings=[];
+let mailMap={}, mailStd={an:'',cc:''};
 let codeReader=null;
 
 // Scanner
@@ -404,6 +408,22 @@ async function gPost(url,body){
 }
 
 // ── DATEN ──
+async function ladeMailEmpfaenger(){
+  mailMap={}; mailStd={an:'',cc:''};
+  try{
+    const r=await gGet(wsPfad(MAIL_SHEET)+'/range(address=\'A2:D50\')');
+    (r.values||[]).forEach(z=>{
+      const blatt=String(z[0]||'').trim(); if(!blatt) return;
+      const e={an:String(z[2]||'').trim(), cc:String(z[3]||'').trim(), bereich:String(z[1]||'').trim()};
+      if(blatt.toUpperCase()==='STANDARD') mailStd=e; else mailMap[blatt]=e;
+    });
+  }catch(e){ /* Blatt fehlt: Rückfall auf MAIL_TO */ }
+}
+function adressListe(s){ return String(s||'').split(/[;,\s]+/).map(a=>a.trim()).filter(a=>a.includes('@')).map(a=>({emailAddress:{address:a}})); }
+function bereichVon(sh){ const e=mailMap[sh]; if(e&&e.bereich) return e.bereich; return (sh===ET_SHEET||!sh)?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length); }
+
+function wsPfad(sh){ return '/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+encodeURIComponent(sh); }
+
 async function loadETData(){
   try{
     document.getElementById('info-file').textContent='🔍 Verbinde…';
@@ -418,28 +438,47 @@ async function loadETData(){
     if(!file) throw new Error('Keine Datei');
     fileId=file.id;
     document.getElementById('info-file').textContent='📁 '+file.name;
-    const range=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+ET_SHEET+'/range(address=\'A'+FIRST_ROW+':P5000\')');
-    etData={}; let count=0;
-    if(range.values){
-      for(let i=0;i<range.values.length;i++){
-        const row=range.values[i];
-        const nr=row[0];
-        if(!nr||!String(nr).toUpperCase().startsWith('ET')) continue;
-        const nrStr=String(nr).trim();
-        const obj={
-          nr:nrStr, anlage:String(row[1]||''), bez:String(row[2]||''),
-          lagerort:String(row[3]||''), lagerplatz:String(row[4]||''),
-          ist:parseFloat(row[5])||0, min:parseFloat(row[6])||0, max:parseFloat(row[7])||0,
-          einheit:String(row[9]||'Stk'), ekp:parseFloat(row[10])||0,
-          hersteller:String(row[12]||''), lieferant:String(row[13]||''),
-          artNr:String(row[14]||''), lz:String(row[15]||''), row:i+FIRST_ROW
-        };
-        etData[nrStr.replace(/-/g,'').toUpperCase()]=obj;
-        etData[nrStr.toUpperCase()]=obj;
-        count++;
+    // Alle Blätter der Datei holen, die mit "ET-" beginnen (ET-Liste, ET-Elektro, ...)
+    let sheets=[];
+    try{
+      const wsList=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets');
+      sheets=(wsList.value||[]).map(w=>String(w.name||'')).filter(n=>n.toUpperCase().startsWith(ET_SHEET_PREFIX.toUpperCase()));
+    }catch(e){ sheets=[]; }
+    if(!sheets.length) sheets=[ET_SHEET];
+    await ladeMailEmpfaenger();
+    etData={}; let count=0; const proBlatt=[]; const doppelt=[]; const fehlerBlatt=[];
+    for(const sh of sheets){
+      let range;
+      try{
+        range=await gGet(wsPfad(sh)+'/range(address=\'A'+FIRST_ROW+':P5000\')');
+      }catch(e){ fehlerBlatt.push(sh); continue; }
+      let c=0;
+      if(range.values){
+        for(let i=0;i<range.values.length;i++){
+          const row=range.values[i];
+          const nr=row[0];
+          if(!nr||!String(nr).toUpperCase().startsWith('ET')) continue;
+          const nrStr=String(nr).trim();
+          const obj={
+            nr:nrStr, anlage:String(row[1]||''), bez:String(row[2]||''),
+            lagerort:String(row[3]||''), lagerplatz:String(row[4]||''),
+            ist:parseFloat(row[5])||0, min:parseFloat(row[6])||0, max:parseFloat(row[7])||0,
+            einheit:String(row[9]||'Stk'), ekp:parseFloat(row[10])||0,
+            hersteller:String(row[12]||''), lieferant:String(row[13]||''),
+            artNr:String(row[14]||''), lz:String(row[15]||''), row:i+FIRST_ROW, sheet:sh
+          };
+          const vorhanden=etData[nrStr.toUpperCase()];
+          if(vorhanden&&vorhanden.sheet!==sh) doppelt.push(nrStr);
+          etData[nrStr.replace(/-/g,'').toUpperCase()]=obj;
+          etData[nrStr.toUpperCase()]=obj;
+          count++; c++;
+        }
       }
+      proBlatt.push((sh===ET_SHEET?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length))+': '+c);
     }
-    document.getElementById('info-count').textContent='✅ '+count+' ET-Teile geladen';
+    document.getElementById('info-count').textContent='✅ '+count+' ET-Teile geladen ('+proBlatt.join(' · ')+')';
+    if(fehlerBlatt.length) toast('⚠️ Blatt nicht lesbar: '+fehlerBlatt.join(', '),'err');
+    if(doppelt.length) toast('⚠️ ET-Nummer doppelt: '+doppelt.slice(0,3).join(', '),'err');
     document.getElementById('info-keys').textContent=Object.keys(etData).filter(k=>k.includes('-')).join('\n');
     toast('✅ '+count+' ET-Teile geladen','ok');
   }catch(e){
@@ -579,16 +618,25 @@ function resetScan(){
 
 async function buchen(){
   if(!currentET||!fileId) return;
-  const neu=buchTyp==='abgang'?currentET.ist-menge:currentET.ist+menge;
-  if(neu<0){toast('⚠️ Bestand wird negativ!','err');return;}
+  if(buchTyp==='abgang'&&currentET.ist-menge<0){toast('⚠️ Bestand wird negativ!','err');return;}
   let liveRow=currentET.row;
   showLoading('Speichere…');
   try{
-    const range=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+ET_SHEET+'/range(address=\'A'+FIRST_ROW+':A5000\')');
+    const blatt=currentET.sheet||ET_SHEET;
+    // Zeile und aktuellen Bestand direkt vor dem Speichern frisch lesen
+    const range=await gGet(wsPfad(blatt)+'/range(address=\'A'+FIRST_ROW+':F5000\')');
+    let liveIst=null;
     if(range.values) for(let i=0;i<range.values.length;i++){
-      if(String(range.values[i][0]||'').trim().toUpperCase()===currentET.nr.toUpperCase()){liveRow=i+FIRST_ROW;break;}
+      if(String(range.values[i][0]||'').trim().toUpperCase()===currentET.nr.toUpperCase()){
+        liveRow=i+FIRST_ROW;
+        const w=parseFloat(range.values[i][5]); liveIst=isNaN(w)?0:w;
+        break;
+      }
     }
-    await gPatch('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+ET_SHEET+'/range(address=\'F'+liveRow+'\')',{values:[[neu]]});
+    if(liveIst!==null) currentET.ist=liveIst;
+    const neu=buchTyp==='abgang'?currentET.ist-menge:currentET.ist+menge;
+    if(neu<0){hideLoading();toast('⚠️ Bestand wird negativ! Aktuell: '+currentET.ist,'err');return;}
+    await gPatch(wsPfad(blatt)+'/range(address=\'F'+liveRow+'\')',{values:[[neu]]});
     const altIst=currentET.ist;
     const k=currentET.nr.replace(/-/g,'').toUpperCase();
     if(etData[k]) etData[k].ist=neu;
@@ -608,12 +656,16 @@ async function buchen(){
 async function sendeMail(et,neuerIst){
   const bm=et.max-neuerIst;
   const datum=new Date().toLocaleString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-  const html='<div style="font-family:Arial,sans-serif;max-width:560px;"><div style="background:#1A5C1A;color:#fff;padding:20px;border-radius:8px 8px 0 0;"><h2 style="margin:0;font-size:18px;">⚠️ Meldebestand erreicht</h2></div><div style="padding:20px;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px;"><p><b>'+et.nr+'</b> – '+et.bez+'<br><small>'+et.anlage+'</small></p><p>Bestand: <b style="color:red;font-size:18px;">'+neuerIst+'</b> '+et.einheit+'<br>Mindest: '+et.min+' | Maximal: '+et.max+'<br><b>Bestellmenge: '+bm+' '+et.einheit+'</b></p><p>Lieferant: '+(et.lieferant||'–')+'<br>Art.-Nr.: '+(et.artNr||'–')+'<br>Lieferzeit: '+(et.lz||'–')+' Tage</p><p style="font-size:11px;color:#888;">👤 '+userName+' · '+datum+'</p></div></div>';
+  const html='<div style="font-family:Arial,sans-serif;max-width:560px;"><div style="background:#1A5C1A;color:#fff;padding:20px;border-radius:8px 8px 0 0;"><h2 style="margin:0;font-size:18px;">⚠️ Meldebestand erreicht</h2></div><div style="padding:20px;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px;"><p><b>'+et.nr+'</b> – '+et.bez+'<br><small>Bereich: '+bereichVon(et.sheet||ET_SHEET)+' · '+et.anlage+'</small></p><p>Bestand: <b style="color:red;font-size:18px;">'+neuerIst+'</b> '+et.einheit+'<br>Mindest: '+et.min+' | Maximal: '+et.max+'<br><b>Bestellmenge: '+bm+' '+et.einheit+'</b></p><p>Lieferant: '+(et.lieferant||'–')+'<br>Art.-Nr.: '+(et.artNr||'–')+'<br>Lieferzeit: '+(et.lz||'–')+' Tage</p><p style="font-size:11px;color:#888;">👤 '+userName+' · '+datum+'</p></div></div>';
+  const blatt=et.sheet||ET_SHEET; const e=mailMap[blatt]||{};
+  let an=adressListe(e.an), cc=adressListe(e.cc);
+  if(!an.length){ an=adressListe(mailStd.an); if(!cc.length) cc=adressListe(mailStd.cc); }
+  if(!an.length){ an=adressListe(MAIL_TO); if(!cc.length) cc=adressListe(MAIL_CC); }
   try{
-    await gPost('/me/sendMail',{message:{subject:'⚠️ MELDEBESTAND: '+et.nr+' – '+et.bez,
+    await gPost('/me/sendMail',{message:{subject:'⚠️ MELDEBESTAND ('+bereichVon(blatt)+'): '+et.nr+' – '+et.bez,
       body:{contentType:'HTML',content:html},
-      toRecipients:[{emailAddress:{address:MAIL_TO}}],
-      ccRecipients:[{emailAddress:{address:MAIL_CC}}]},saveToSentItems:true});
+      toRecipients:an,
+      ccRecipients:cc},saveToSentItems:true});
     toast('📧 Mail gesendet','info');
   }catch(e){}
 }
