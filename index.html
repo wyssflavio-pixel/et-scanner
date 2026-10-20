@@ -465,7 +465,7 @@ async function protokolliere(et,art,menge,vorher,nachher){
   try{
     const s=excelSerial(new Date()); const tag=Math.floor(s);
     const st=await gPost('/drives/'+driveId+'/items/'+fileId+'/workbook/tables/'+LOG_TABLE+'/rows/add',
-      {index:null, values:[[tag, s-tag, userName||userEmail||'', bereichVon(et.sheet), et.nr, et.bez||'', et.anlage||'', art, menge, vorher, nachher, 'App']]});
+      {index:0, values:[[tag, s-tag, userName||userEmail||'', bereichVon(et.sheet), et.nr, et.bez||'', et.anlage||'', art, menge, vorher, nachher, 'App']]});
     return st>=200&&st<300;
   }catch(e){ return false; }
 }
