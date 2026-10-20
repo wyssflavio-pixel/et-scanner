@@ -117,6 +117,12 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
 .hist-delta{font-size:20px;font-weight:800;}
 .hist-delta.out{color:var(--red);}
 .hist-delta.in{color:var(--blue);}
+.hist-delta.xl{color:#777;font-size:14px;}
+.hist-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 10px;}
+.hist-chip{border:1px solid #ddd;background:#fff;border-radius:16px;padding:5px 11px;font-size:12px;color:#555;cursor:pointer;}
+.hist-chip.on{background:var(--g1);border-color:var(--g1);color:#fff;}
+.hist-mehr{text-align:center;font-size:12px;color:#999;padding:10px;}
+.et-verlauf-z{display:flex;justify-content:space-between;gap:8px;font-size:12px;padding:3px 0;border-top:1px solid #eee;}
 
 /* LOADING */
 .loading{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,255,255,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;}
@@ -182,7 +188,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
           <div class="scanner-status" id="scan-status">Halte QR-Code in den Rahmen…</div>
         </div>
         <div class="manual-row">
-          <input type="text" id="manual-et" placeholder="ET-Nr oder Bezeichnung, z.B. dämpfer" oninput="sucheLive()" onkeydown="if(event.key==='Enter'){event.preventDefault();manualSearch();}" autocomplete="off" />
+          <input type="text" id="manual-et" placeholder="ET-Nr oder Bezeichnung" oninput="sucheLive()" onkeydown="if(event.key==='Enter'){event.preventDefault();manualSearch();}" autocomplete="off" />
           <button onclick="manualSearch()">🔍</button>
         </div>
         <div id="such-ergebnis"></div>
@@ -205,6 +211,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
             <div class="stat"><div class="stat-lbl">Mindest</div><div class="stat-val ok" id="s-min">–</div></div>
             <div class="stat"><div class="stat-lbl">Maximal</div><div class="stat-val" id="s-max">–</div></div>
           </div>
+          <div id="et-verlauf" style="margin-top:10px;"></div>
         </div>
 
         <div class="card">
@@ -234,9 +241,10 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
     <div id="tab-hist" class="hidden">
       <div class="card" style="padding:0;overflow:hidden;">
         <div style="padding:14px;display:flex;justify-content:space-between;align-items:center;">
-          <span class="card-title" style="margin:0;">Buchungen</span>
-          <button onclick="reloadData()" style="background:var(--gl);border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--g1);cursor:pointer;">🔄 Neu laden</button>
+          <span class="card-title" style="margin:0;">Buchungen aller Personen</span>
+          <button onclick="verlaufNeuLaden()" style="background:var(--gl);border:none;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--g1);cursor:pointer;">🔄 Neu laden</button>
         </div>
+        <div id="hist-chips" class="hist-chips"></div>
         <div id="hist-list"><div style="text-align:center;padding:30px;color:#ccc;font-size:14px;">Noch keine Buchungen</div></div>
       </div>
     </div>
@@ -278,7 +286,8 @@ const ET_SHEET_PREFIX = 'ET-';     // alle Blätter, deren Name so beginnt, werd
 const FIRST_ROW = 5;
 const MAIL_TO = 'christopher.nagel@tschopp.swiss';  // nur falls im Blatt "Mail-Empfänger" nichts steht
 const MAIL_CC = '';
-const MAIL_SHEET = 'Mail-Empfänger';               // Blatt mit Empfängern pro Bereich
+const MAIL_SHEET = 'Mail-Empfänger';
+const LOG_TABLE = 'tblBuchungen';                  // Tabelle im Blatt "Buchungen" (Buchungsprotokoll)               // Blatt mit Empfängern pro Bereich
 const REDIRECT = window.location.origin + window.location.pathname;
 document.addEventListener('DOMContentLoaded',()=>{ if(window.location.pathname.indexOf('/test/')>=0){ const b=document.getElementById('test-badge'); if(b) b.style.display='inline'; } });
 
@@ -432,6 +441,35 @@ async function ladeMailEmpfaenger(){
 function adressListe(s){ return String(s||'').split(/[;,\s]+/).map(a=>a.trim()).filter(a=>a.includes('@')).map(a=>({emailAddress:{address:a}})); }
 function bereichVon(sh){ const e=mailMap[sh]; if(e&&e.bereich) return e.bereich; return (sh===ET_SHEET||!sh)?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length); }
 
+// ── BUCHUNGSPROTOKOLL ──
+let logRows=[], logOk=false, histFilter='Alle', bereichListe=[];
+function serialText(s){
+  const n=parseFloat(s); if(isNaN(n)) return '';
+  const d=new Date(Math.round((n-25569)*86400000));
+  const p=x=>String(x).padStart(2,'0');
+  return p(d.getUTCDate())+'.'+p(d.getUTCMonth()+1)+'.'+String(d.getUTCFullYear()).slice(2)+' '+p(d.getUTCHours())+':'+p(d.getUTCMinutes());
+}
+async function ladeProtokoll(){
+  try{
+    const r=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/tables/'+LOG_TABLE+'/dataBodyRange');
+    logRows=(r.values||[]).filter(z=>String(z[4]||'').trim()!=='').map(z=>({
+      zeit:(parseFloat(z[0])||0)+(parseFloat(z[1])||0), person:String(z[2]||''), bereich:String(z[3]||''), nr:String(z[4]||'').trim(),
+      bez:String(z[5]||''), art:String(z[7]||''), menge:z[8], vorher:z[9], nachher:z[10], quelle:String(z[11]||'')}));
+    logRows.sort((a,b)=>b.zeit-a.zeit);
+    logOk=true;
+  }catch(e){ logRows=[]; logOk=false; }
+}
+async function verlaufNeuLaden(){ showLoading('Lade Verlauf…'); await ladeProtokoll(); hideLoading(); renderHist(); }
+function excelSerial(d){ return Date.UTC(d.getFullYear(),d.getMonth(),d.getDate(),d.getHours(),d.getMinutes(),d.getSeconds())/86400000+25569; }
+async function protokolliere(et,art,menge,vorher,nachher){
+  try{
+    const s=excelSerial(new Date()); const tag=Math.floor(s);
+    const st=await gPost('/drives/'+driveId+'/items/'+fileId+'/workbook/tables/'+LOG_TABLE+'/rows/add',
+      {index:null, values:[[tag, s-tag, userName||userEmail||'', bereichVon(et.sheet), et.nr, et.bez||'', et.anlage||'', art, menge, vorher, nachher, 'App']]});
+    return st>=200&&st<300;
+  }catch(e){ return false; }
+}
+
 function wsPfad(sh){ return '/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+encodeURIComponent(sh); }
 
 async function loadETData(){
@@ -487,6 +525,8 @@ async function loadETData(){
       proBlatt.push((sh===ET_SHEET?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length))+': '+c);
     }
     document.getElementById('info-count').textContent='✅ '+count+' ET-Teile geladen ('+proBlatt.join(' · ')+')';
+    bereichListe=sheets.map(bereichVon);
+    await ladeProtokoll();
     if(fehlerBlatt.length) toast('⚠️ Blatt nicht lesbar: '+fehlerBlatt.join(', '),'err');
     if(doppelt.length) toast('⚠️ ET-Nummer doppelt: '+doppelt.slice(0,3).join(', '),'err');
     document.getElementById('info-keys').textContent=Object.keys(etData).filter(k=>k.includes('-')).join('\n');
@@ -674,6 +714,7 @@ function zeigET(et){
   document.getElementById('et-badge').className='badge '+bc;
   document.getElementById('s-ist').className='stat-val '+(status==='OK'?'ok':status==='Bestellen'?'warn':'crit');
   document.getElementById('m-num').textContent='1';
+  zeigEtVerlauf(et);
   updatePreview();
   // Seite wechseln
   document.getElementById('page-scanner').style.display='none';
@@ -735,9 +776,11 @@ async function buchen(){
     currentET.ist=neu;
     bookings.unshift({nr:currentET.nr,bez:currentET.bez,typ:buchTyp,menge,neu,altIst,
       time:new Date().toLocaleTimeString('de-CH',{hour:'2-digit',minute:'2-digit'}),user:userName});
+    const protOk=await protokolliere(currentET,buchTyp==='abgang'?'Abgang':'Zugang',menge,altIst,neu);
+    if(protOk){ logRows.unshift({zeit:excelSerial(new Date()),person:userName||userEmail||'',bereich:bereichVon(currentET.sheet),nr:currentET.nr,bez:currentET.bez||'',art:buchTyp==='abgang'?'Abgang':'Zugang',menge,vorher:altIst,nachher:neu,quelle:'App'}); logOk=true; }
     if(buchTyp==='abgang'&&neu<=currentET.min){showLoading('Sende Mail…');await sendeMail(currentET,neu);}
     hideLoading();
-    toast('✅ '+currentET.nr+' '+(buchTyp==='abgang'?'−':'+')+menge+' → '+neu,'ok');
+    toast('✅ '+currentET.nr+' '+(buchTyp==='abgang'?'−':'+')+menge+' → '+neu+(protOk?'':' (ohne Protokoll)'),protOk?'ok':'info');
     resetScan();
   }catch(e){
     hideLoading();
@@ -767,10 +810,41 @@ function goTab(t){
   document.querySelectorAll('.tab').forEach((b,i)=>b.classList.toggle('on',['scan','hist','info'][i]===t));
   if(t==='hist') renderHist();
 }
+function histZeile(b){
+  const ex=b.quelle==='Excel'||(b.art!=='Abgang'&&b.art!=='Zugang');
+  const delta=ex?('= '+esc(b.nachher)):((b.art==='Abgang'?'−':'+')+esc(b.menge));
+  const kl=ex?'xl':(b.art==='Abgang'?'out':'in');
+  const best=ex?'in Excel geändert':(esc(b.vorher)+' → '+esc(b.nachher));
+  return '<div class="hist-item"><div><div class="hist-nr">'+esc(b.nr)+'</div><div class="hist-bez">'+esc(b.bez)+'</div>'
+    +'<div class="hist-time">'+esc(serialText(b.zeit))+' · '+esc(b.person||'–')+' · '+esc(b.bereich)+' · '+best+'</div></div>'
+    +'<div class="hist-delta '+kl+'">'+delta+'</div></div>';
+}
+function setHistFilter(f){ histFilter=f; renderHist(); }
 function renderHist(){
-  const el=document.getElementById('hist-list');
-  if(!bookings.length){el.innerHTML='<div style="text-align:center;padding:30px;color:#ccc;font-size:14px;">Noch keine Buchungen</div>';return;}
-  el.innerHTML=bookings.map(b=>`<div class="hist-item"><div><div class="hist-nr">${b.nr}</div><div class="hist-bez">${b.bez}</div><div class="hist-time">🕐 ${b.time} · ${b.altIst}→${b.neu} · ${b.user}</div></div><div class="hist-delta ${b.typ==='abgang'?'out':'in'}">${b.typ==='abgang'?'−':'+'}${b.menge}</div></div>`).join('');
+  const el=document.getElementById('hist-list'), ch=document.getElementById('hist-chips');
+  if(!logOk){
+    ch.innerHTML='';
+    if(!bookings.length){el.innerHTML='<div style="text-align:center;padding:30px;color:#ccc;font-size:14px;">Noch keine Buchungen</div>';return;}
+    el.innerHTML='<div class="hist-mehr">Protokoll nicht erreichbar, nur deine Buchungen seit dem Öffnen</div>'+bookings.map(b=>histZeile({nr:b.nr,bez:b.bez,art:b.typ==='abgang'?'Abgang':'Zugang',menge:b.menge,vorher:b.altIst,nachher:b.neu,person:b.user,bereich:'',zeit:excelSerial(new Date()),quelle:'App'})).join('');
+    return;
+  }
+  const bereiche=['Alle',...new Set([...bereichListe,...logRows.map(b=>b.bereich).filter(x=>x)])];
+  if(!bereiche.includes(histFilter)) histFilter='Alle';
+  ch.innerHTML=bereiche.map(b=>'<button class="hist-chip'+(b===histFilter?' on':'')+'" onclick="setHistFilter(\''+esc(b).replace(/\\/g,'')+'\')">'+esc(b)+'</button>').join('');
+  const liste=logRows.filter(b=>histFilter==='Alle'||b.bereich===histFilter);
+  if(!liste.length){el.innerHTML='<div style="text-align:center;padding:30px;color:#ccc;font-size:14px;">Noch keine Buchungen</div>';return;}
+  const max=100;
+  el.innerHTML=liste.slice(0,max).map(histZeile).join('')+(liste.length>max?'<div class="hist-mehr">Die letzten '+max+' von '+liste.length+' Buchungen. Alle stehen in Excel im Blatt Buchungen.</div>':'');
+}
+function zeigEtVerlauf(et){
+  const box=document.getElementById('et-verlauf'); if(!box) return;
+  const liste=logRows.filter(b=>b.nr.toUpperCase()===String(et.nr).toUpperCase()).slice(0,5);
+  if(!liste.length){ box.innerHTML=''; return; }
+  box.innerHTML='<div class="card-title" style="margin:6px 0 4px;">Letzte Buchungen</div>'+liste.map(b=>{
+    const ex=b.quelle==='Excel'||(b.art!=='Abgang'&&b.art!=='Zugang');
+    const d=ex?'= '+esc(b.nachher):((b.art==='Abgang'?'−':'+')+esc(b.menge));
+    return '<div class="et-verlauf-z"><span>'+esc(serialText(b.zeit))+' · '+esc(b.person||'–')+'</span><b>'+d+'</b></div>';
+  }).join('');
 }
 function showLoading(txt){document.getElementById('loading-text').textContent=txt||'Laden…';document.getElementById('loading').classList.remove('hidden');}
 function hideLoading(){document.getElementById('loading').classList.add('hidden');}
