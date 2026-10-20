@@ -430,7 +430,7 @@ async function gPost(url,body){
 async function ladeMailEmpfaenger(){
   mailMap={}; mailStd={an:'',cc:''};
   try{
-    const r=await gGet(wsPfad(MAIL_SHEET)+'/range(address=\'A2:D50\')');
+    const r=await gGet(nurWerte(wsPfad(MAIL_SHEET)+'/range(address=\'A2:D50\')'));
     (r.values||[]).forEach(z=>{
       const blatt=String(z[0]||'').trim(); if(!blatt) return;
       const e={an:String(z[2]||'').trim(), cc:String(z[3]||'').trim(), bereich:String(z[1]||'').trim()};
@@ -451,7 +451,7 @@ function serialText(s){
 }
 async function ladeProtokoll(){
   try{
-    const r=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/tables/'+LOG_TABLE+'/dataBodyRange');
+    const r=await gGet(nurWerte('/drives/'+driveId+'/items/'+fileId+'/workbook/tables/'+LOG_TABLE+'/dataBodyRange'));
     logRows=(r.values||[]).filter(z=>String(z[4]||'').trim()!=='').map(z=>({
       zeit:(parseFloat(z[0])||0)+(parseFloat(z[1])||0), person:String(z[2]||''), bereich:String(z[3]||''), nr:String(z[4]||'').trim(),
       bez:String(z[5]||''), art:String(z[7]||''), menge:z[8], vorher:z[9], nachher:z[10], quelle:String(z[11]||'')}));
@@ -472,66 +472,96 @@ async function protokolliere(et,art,menge,vorher,nachher){
 
 function wsPfad(sh){ return '/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets/'+encodeURIComponent(sh); }
 
+// Nur die Werte holen (ohne Formate und Formeln): viel weniger Daten
+function nurWerte(url){ return url+(url.indexOf('?')>=0?'&':'?')+'$select=values'; }
+
+async function dateiFinden(){
+  // gemerkte Datei-IDs zuerst versuchen (spart drei Abfragen beim Start)
+  try{
+    const g=JSON.parse(localStorage.getItem('etDatei')||'null');
+    if(g&&g.driveId&&g.fileId){
+      driveId=g.driveId; fileId=g.fileId;
+      const wsList=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets?$select=name');
+      return {name:g.name, wsList};
+    }
+  }catch(e){ try{localStorage.removeItem('etDatei');}catch(x){} }
+  const site=await gGet('/sites/'+SP_HOSTNAME+':'+SP_SITE_PATH);
+  siteId=site.id;
+  const drive=await gGet('/sites/'+siteId+'/drive');
+  driveId=drive.id;
+  const items=await gGet('/drives/'+driveId+'/root:'+SP_FOLDER_PATH+':/children');
+  if(!items.value||!items.value.length) throw new Error('Ordner leer');
+  let file=items.value.find(it=>it.name&&it.name.toLowerCase()===SP_FILENAME.toLowerCase());
+  if(!file) file=items.value.find(it=>it.name&&it.name.toLowerCase().endsWith('.xlsm'));
+  if(!file) throw new Error('Keine Datei');
+  fileId=file.id;
+  try{ localStorage.setItem('etDatei',JSON.stringify({driveId,fileId,name:file.name})); }catch(e){}
+  let wsList=null;
+  try{ wsList=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets?$select=name'); }catch(e){}
+  return {name:file.name, wsList};
+}
+
+async function blattLesen(sh){
+  // nur der benutzte Bereich des Blatts; falls das nicht geht, der feste Bereich wie bisher
+  try{
+    const r=await gGet(wsPfad(sh)+'/usedRange(valuesOnly=true)?$select=values,rowIndex,columnIndex');
+    const start=(r.rowIndex||0)+1, spalte=r.columnIndex||0;
+    return (r.values||[]).map((z,i)=>({zeile:start+i, werte:spalte>0?new Array(spalte).fill('').concat(z):z})).filter(x=>x.zeile>=FIRST_ROW);
+  }catch(e){
+    const r=await gGet(nurWerte(wsPfad(sh)+'/range(address=\'A'+FIRST_ROW+':P5000\')'));
+    return (r.values||[]).map((z,i)=>({zeile:FIRST_ROW+i, werte:z}));
+  }
+}
+
 async function loadETData(){
   try{
     document.getElementById('info-file').textContent='🔍 Verbinde…';
-    const site=await gGet('/sites/'+SP_HOSTNAME+':'+SP_SITE_PATH);
-    siteId=site.id;
-    const drive=await gGet('/sites/'+siteId+'/drive');
-    driveId=drive.id;
-    const items=await gGet('/drives/'+driveId+'/root:'+SP_FOLDER_PATH+':/children');
-    if(!items.value||!items.value.length) throw new Error('Ordner leer');
-    let file=items.value.find(it=>it.name&&it.name.toLowerCase()===SP_FILENAME.toLowerCase());
-    if(!file) file=items.value.find(it=>it.name&&it.name.toLowerCase().endsWith('.xlsm'));
-    if(!file) throw new Error('Keine Datei');
-    fileId=file.id;
-    document.getElementById('info-file').textContent='📁 '+file.name;
-    // Alle Blätter der Datei holen, die mit "ET-" beginnen (ET-Liste, ET-Elektro, ...)
-    let sheets=[];
-    try{
-      const wsList=await gGet('/drives/'+driveId+'/items/'+fileId+'/workbook/worksheets');
-      sheets=(wsList.value||[]).map(w=>String(w.name||'')).filter(n=>n.toUpperCase().startsWith(ET_SHEET_PREFIX.toUpperCase()));
-    }catch(e){ sheets=[]; }
+    const d=await dateiFinden();
+    document.getElementById('info-file').textContent='📁 '+(d.name||SP_FILENAME);
+    // Alle Blätter der Datei, die mit "ET-" beginnen (ET-Liste, ET-Elektro, ...)
+    let sheets=((d.wsList&&d.wsList.value)||[]).map(w=>String(w.name||'')).filter(n=>n.toUpperCase().startsWith(ET_SHEET_PREFIX.toUpperCase()));
     if(!sheets.length) sheets=[ET_SHEET];
-    await ladeMailEmpfaenger();
+    // Mail-Empfänger und alle Blätter gleichzeitig laden
+    const [ , ergebnisse]=await Promise.all([
+      ladeMailEmpfaenger(),
+      Promise.all(sheets.map(sh=>blattLesen(sh).then(zeilen=>({sh,zeilen})).catch(()=>({sh,fehler:true}))))
+    ]);
     etData={}; let count=0; const proBlatt=[]; const doppelt=[]; const fehlerBlatt=[];
-    for(const sh of sheets){
-      let range;
-      try{
-        range=await gGet(wsPfad(sh)+'/range(address=\'A'+FIRST_ROW+':P5000\')');
-      }catch(e){ fehlerBlatt.push(sh); continue; }
+    for(const erg of ergebnisse){
+      const sh=erg.sh;
+      if(erg.fehler){ fehlerBlatt.push(sh); continue; }
       let c=0;
-      if(range.values){
-        for(let i=0;i<range.values.length;i++){
-          const row=range.values[i];
-          const nr=row[0];
-          if(!nr||!String(nr).toUpperCase().startsWith('ET')) continue;
-          const nrStr=String(nr).trim();
-          const obj={
-            nr:nrStr, anlage:String(row[1]||''), bez:String(row[2]||''),
-            lagerort:String(row[3]||''), lagerplatz:String(row[4]||''),
-            ist:parseFloat(row[5])||0, min:parseFloat(row[6])||0, max:parseFloat(row[7])||0,
-            einheit:String(row[9]||'Stk'), ekp:parseFloat(row[10])||0,
-            hersteller:String(row[12]||''), lieferant:String(row[13]||''),
-            artNr:String(row[14]||''), lz:String(row[15]||''), row:i+FIRST_ROW, sheet:sh
-          };
-          const vorhanden=etData[nrStr.toUpperCase()];
-          if(vorhanden&&vorhanden.sheet!==sh) doppelt.push(nrStr);
-          etData[nrStr.replace(/-/g,'').toUpperCase()]=obj;
-          etData[nrStr.toUpperCase()]=obj;
-          count++; c++;
-        }
+      for(const z of erg.zeilen){
+        const row=z.werte;
+        const nr=row[0];
+        if(!nr||!String(nr).toUpperCase().startsWith('ET')) continue;
+        const nrStr=String(nr).trim();
+        const obj={
+          nr:nrStr, anlage:String(row[1]||''), bez:String(row[2]||''),
+          lagerort:String(row[3]||''), lagerplatz:String(row[4]||''),
+          ist:parseFloat(row[5])||0, min:parseFloat(row[6])||0, max:parseFloat(row[7])||0,
+          einheit:String(row[9]||'Stk'), ekp:parseFloat(row[10])||0,
+          hersteller:String(row[12]||''), lieferant:String(row[13]||''),
+          artNr:String(row[14]||''), lz:String(row[15]||''), row:z.zeile, sheet:sh
+        };
+        const vorhanden=etData[nrStr.toUpperCase()];
+        if(vorhanden&&vorhanden.sheet!==sh) doppelt.push(nrStr);
+        etData[nrStr.replace(/-/g,'').toUpperCase()]=obj;
+        etData[nrStr.toUpperCase()]=obj;
+        count++; c++;
       }
       proBlatt.push((sh===ET_SHEET?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length))+': '+c);
     }
     document.getElementById('info-count').textContent='✅ '+count+' ET-Teile geladen ('+proBlatt.join(' · ')+')';
     bereichListe=sheets.map(bereichVon);
-    await ladeProtokoll();
+    // Verlauf im Hintergrund laden, der Scanner ist schon bereit
+    ladeProtokoll().then(()=>{ const h=document.getElementById('tab-hist'); if(h&&!h.classList.contains('hidden')) renderHist(); });
     if(fehlerBlatt.length) toast('⚠️ Blatt nicht lesbar: '+fehlerBlatt.join(', '),'err');
-    if(doppelt.length) toast('⚠️ ET-Nummer doppelt: '+doppelt.slice(0,3).join(', '),'err');
+    else if(doppelt.length) toast('⚠️ ET-Nummer doppelt: '+doppelt.slice(0,3).join(', '),'err');
+    else toast('✅ '+count+' ET-Teile geladen','ok');
     document.getElementById('info-keys').textContent=Object.keys(etData).filter(k=>k.includes('-')).join('\n');
-    toast('✅ '+count+' ET-Teile geladen','ok');
   }catch(e){
+    try{ localStorage.removeItem('etDatei'); }catch(x){}
     document.getElementById('info-file').textContent='❌ '+e.message;
     toast('Fehler: '+e.message.substring(0,60),'err');
   }
@@ -757,7 +787,7 @@ async function buchen(){
   try{
     const blatt=currentET.sheet||ET_SHEET;
     // Zeile und aktuellen Bestand direkt vor dem Speichern frisch lesen
-    const range=await gGet(wsPfad(blatt)+'/range(address=\'A'+FIRST_ROW+':F5000\')');
+    const range=await gGet(nurWerte(wsPfad(blatt)+'/range(address=\'A'+FIRST_ROW+':F5000\')'));
     let liveIst=null;
     if(range.values) for(let i=0;i<range.values.length;i++){
       if(String(range.values[i][0]||'').trim().toUpperCase()===currentET.nr.toUpperCase()){
