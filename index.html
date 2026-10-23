@@ -164,7 +164,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
 .d-sheet{background:#fff;padding:20px 20px 8px;}
 @keyframes dUp{from{transform:translateY(36px);opacity:0}to{transform:none;opacity:1}}
 @keyframes dIn{from{opacity:0}to{opacity:1}}
-.d-bestand{font-size:54px;font-weight:800;letter-spacing:-.04em;line-height:1;}
+.d-bestand{font-size:54px;font-weight:800;letter-spacing:-.04em;line-height:1;white-space:nowrap;}
 .d-einh{font-size:18px;font-weight:600;color:#7A867C;letter-spacing:0;}
 .d-pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:6px 12px;border-radius:20px;text-transform:uppercase;}
 .d-pill i{width:7px;height:7px;border-radius:50%;display:inline-block;}
@@ -172,6 +172,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
 .d-pill.warn{background:#FFF4E0;color:#B45309;} .d-pill.warn i{background:#F59E0B;}
 .d-pill.crit{background:#FDECEC;color:#B91C1C;} .d-pill.crit i{background:#EF4444;}
 .d-minmax{font-size:12px;color:#7A867C;margin-top:6px;}
+.d-melde{display:inline-flex;align-items:center;gap:8px;margin-top:8px;background:#F4F5F1;border-radius:10px;padding:6px 10px;}
+.d-melde span{font-size:12px;color:#7A867C;font-weight:600;}
+.d-melde b{font-size:18px;font-weight:800;color:#0E1F12;}
 .d-seg{display:flex;gap:4px;margin-top:14px;}
 .d-seg span{flex:1;height:8px;border-radius:4px;background:#E7EAE4;transition:background .3s;}
 .d-zeile{display:flex;align-items:center;gap:10px;background:#F4F5F1;border-radius:16px;padding:11px 12px;margin-top:14px;}
@@ -278,8 +281,8 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
         <div class="d-sheet">
           <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:10px">
             <div><div class="d-lbl">Bestand</div><div class="d-bestand"><span id="s-ist">–</span><span class="d-einh" id="d-einheit"> Stk</span></div></div>
-            <div style="text-align:right"><span class="d-pill ok" id="et-badge"><i></i><span id="et-badge-t">OK</span></span>
-              <div class="d-minmax">Min <b id="s-min">–</b> · Max <b id="s-max">–</b></div></div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;flex-shrink:0"><span class="d-pill ok" id="et-badge"><i></i><span id="et-badge-t">OK</span></span>
+              <div class="d-melde"><span>Meldebestand</span><b id="s-min">–</b></div><b id="s-max" hidden></b></div>
           </div>
           <div class="d-seg" id="d-seg"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
 
