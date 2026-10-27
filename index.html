@@ -303,6 +303,11 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
             <div style="min-width:0"><div class="d-lbl">Artikelnummer</div><div class="d-v d-mono" id="d-an"></div></div>
             <span class="d-copy">Kopieren</span>
           </div>
+          <div class="d-chips" id="d-chips2">
+            <div class="d-chip" id="d-lf2-box"><div class="d-lbl">Lieferant 2</div><div class="d-v" id="d-lf2"></div></div>
+            <div class="d-chip" id="d-an2-box"><div class="d-lbl">Artikelnummer 2</div><div class="d-v d-mono" id="d-an2"></div></div>
+          </div>
+          <div class="d-chip" id="d-bem-box" style="margin-top:8px"><div class="d-lbl">Bemerkung</div><div class="d-v" id="d-bem" style="font-weight:500"></div></div>
 
           <div id="et-verlauf"></div>
 
@@ -634,7 +639,7 @@ async function loadETData(){
           ist:parseFloat(row[5])||0, min:parseFloat(row[6])||0, max:parseFloat(row[7])||0,
           einheit:String(row[9]||'Stk'), ekp:parseFloat(row[10])||0,
           hersteller:String(row[12]||''), lieferant:String(row[13]||''),
-          artNr:String(row[14]||''), lz:String(row[15]||''), row:z.zeile, sheet:sh
+          artNr:String(row[14]||''), lz:String(row[15]||''), lieferant2:String(row[16]||''), artNr2:String(row[17]||''), bem:String(row[18]||''), row:z.zeile, sheet:sh
         };
         const vorhanden=etData[nrStr.toUpperCase()];
         if(vorhanden&&vorhanden.sheet!==sh) doppelt.push(nrStr);
@@ -713,7 +718,7 @@ function processCode(qrData){
     const nums=raw.replace(/[^0-9]/g,'');
     if(nums.length>=4) for(const k of Object.keys(etData)){if(k.replace(/[^0-9]/g,'')===nums){et=etData[k];break;}}
   }
-  if(!et) for(const k of Object.keys(etData)){const a=String(etData[k].artNr||'').toUpperCase().trim();if(a&&a===rawU){et=etData[k];break;}}
+  if(!et) for(const k of Object.keys(etData)){const a=String(etData[k].artNr||'').toUpperCase().trim(), a2=String(etData[k].artNr2||'').toUpperCase().trim();if((a&&a===rawU)||(a2&&a2===rawU)){et=etData[k];break;}}
   if(!et){
     ansichtQuelle='scan';
     setScanStatus('❌ Nicht gefunden: '+qrData,'');
@@ -759,7 +764,7 @@ function findeGenau(val){
   if(etData[u]||etData[n]) return true;
   const nums=u.replace(/[^0-9]/g,'');
   if(/^(ET)?[-\s]?[0-9]{4,}$/.test(u)) for(const k of Object.keys(etData)){ if(k.replace(/[^0-9]/g,'')===nums) return true; }
-  for(const k of Object.keys(etData)){ const a=String(etData[k].artNr||'').toUpperCase().trim(); if(a&&a===u) return true; }
+  for(const k of Object.keys(etData)){ const a=String(etData[k].artNr||'').toUpperCase().trim(), a2=String(etData[k].artNr2||'').toUpperCase().trim(); if((a&&a===u)||(a2&&a2===u)) return true; }
   return false;
 }
 function normText(s){
@@ -773,7 +778,7 @@ function suchTeile(query){
   const woerter=String(query||'').split(/\s+/).map(normText).filter(w=>w.length>0);
   if(!woerter.length) return {treffer:[],aehnlich:false};
   const teile=alleTeile().map(et=>{
-    const felder=[et.nr,et.bez,et.anlage,et.hersteller,et.lieferant,et.artNr,et.lagerplatz];
+    const felder=[et.nr,et.bez,et.anlage,et.hersteller,et.lieferant,et.artNr,et.lieferant2,et.artNr2,et.lagerplatz];
     return {et, text:normText(felder.join(' ')), woerter:felder.join(' ').split(/[^A-Za-z0-9ÄÖÜäöüß]+/).map(normText).filter(w=>w.length>=4), bez:normText(et.bez)};
   });
   // genaue Suche: jedes Suchwort muss vorkommen
@@ -850,6 +855,12 @@ function zeigET(et){
   setz('d-hs-box','d-hs',String(et.hersteller||'').trim());
   setz('d-an-box','d-an',String(et.artNr||'').trim());
   document.getElementById('d-chips').style.display=(et.lieferant||et.hersteller)?'flex':'none';
+  setz('d-lf2-box','d-lf2',String(et.lieferant2||'').trim());
+  setz('d-an2-box','d-an2',String(et.artNr2||'').trim());
+  document.getElementById('d-chips2').style.display=(String(et.lieferant2||'').trim()||String(et.artNr2||'').trim())?'flex':'none';
+  setz('d-bem-box','d-bem',String(et.bem||'').trim());
+  document.querySelector('#d-lf-box .d-lbl').textContent=(String(et.lieferant2||'').trim()||String(et.artNr2||'').trim())?'Lieferant 1':'Lieferant';
+  document.querySelector('#d-an-box .d-lbl').textContent=(String(et.lieferant2||'').trim()||String(et.artNr2||'').trim())?'Artikelnummer 1':'Artikelnummer';
   document.getElementById('d-einheit').textContent=' '+(et.einheit||'Stk');
   document.getElementById('s-min').textContent=et.min;
   document.getElementById('s-max').textContent=et.max;
@@ -875,7 +886,7 @@ function bestandZeigen(et,animiert){
   document.getElementById('et-badge').className='d-pill '+kl;
   document.getElementById('et-badge-t').textContent=txt;
   const farbe=kl==='ok'?'#22C55E':kl==='warn'?'#F59E0B':'#EF4444';
-  const anteil=et.max>0?Math.min(1,et.ist/et.max):(et.ist>0?1:0);
+  const anteil=et.max>0?Math.min(1,et.ist/et.max):(et.min>0?Math.min(1,et.ist/(2*et.min)):(et.ist>0?1:0));
   const voll=et.ist>0?Math.max(1,Math.round(anteil*10)):0;
   document.querySelectorAll('#d-seg span').forEach((s,i)=>{s.style.background=i<voll?farbe:'#E7EAE4';});
   const el=document.getElementById('s-ist');
