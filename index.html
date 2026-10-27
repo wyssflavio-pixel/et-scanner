@@ -1006,16 +1006,48 @@ async function buchen(){
   }
 }
 
+function mailHtml(d){
+  const e=s=>esc(String(s==null?'':s).trim());
+  const F='font-family:Arial,Helvetica,sans-serif;';
+  const zeile=(l,v,st)=>v?'<tr><td style="'+F+'width:150px;color:#666;padding:6px 0;border-bottom:1px solid #eee;font-size:14px">'+l+'</td><td style="'+F+'padding:6px 0;border-bottom:1px solid #eee;font-size:14px;'+(st||'')+'">'+v+'</td></tr>':'';
+  const kasten=(l,v,farbe,rahmen,bg)=>'<td width="33%" style="'+F+'border:'+rahmen+';background:'+bg+';padding:10px;text-align:center"><div style="font-size:11px;color:'+(farbe==='#1A5C1A'?'#1A5C1A':'#666')+';letter-spacing:.5px;font-weight:bold">'+l+'</div><div style="font-size:24px;font-weight:bold;color:'+farbe+';margin-top:2px">'+v+'</div></td>';
+  const lief=[[d.lief1,d.art1],[d.lief2,d.art2]].map((x,i)=>[i+1,e(x[0]),e(x[1])]).filter(x=>x[1]||x[2]);
+  const nur1=lief.length===1;
+  const liefRows=lief.map(x=>'<tr><td style="'+F+'padding:7px 8px;border-bottom:1px solid #eee;font-size:14px">'+(nur1?'':'<span style="color:#888;font-size:12px">'+x[0]+' · </span>')+(x[1]||'–')+'</td><td style="padding:7px 8px;border-bottom:1px solid #eee;font-size:14px;font-family:Consolas,monospace">'+(x[2]||'–')+'</td></tr>').join('');
+  const platz=[e(d.lagerort),e(d.lagerplatz)].filter(x=>x).join(' · ');
+  return '<div style="background:#ffffff;'+F+'color:#222;max-width:620px;border:1px solid #d9ddd6">'
+   +'<div style="background:#1A5C1A;color:#ffffff;padding:14px 18px"><div style="font-size:12px;letter-spacing:1px;color:#c8e6c9">ET-SCANNER · BEREICH '+e(d.bereich).toUpperCase()+'</div><div style="font-size:19px;font-weight:bold;margin-top:3px">Meldebestand erreicht, bitte bestellen</div></div>'
+   +'<div style="padding:16px 18px"><table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">'
+   +zeile('ET-Nummer',e(d.nr),'font-family:Consolas,monospace;font-weight:bold;color:#1A5C1A')
+   +zeile('Bezeichnung',e(d.bez)||'–','font-weight:bold')
+   +zeile('Anlage',e(d.anlage))
+   +zeile('Lagerplatz',platz,'font-family:Consolas,monospace')
+   +'</table>'
+   +'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:16px"><tr>'
+   +kasten('BESTAND',e(d.ist)+' '+e(d.einheit),'#B91C1C','1px solid #e2e2e2','#ffffff')
+   +kasten('MELDEBESTAND',e(d.min)+' '+e(d.einheit),'#222222','1px solid #e2e2e2','#ffffff')
+   +kasten('BESTELLMENGE',e(d.bm)+' '+e(d.einheit),'#1A5C1A','2px solid #1A5C1A','#EEF5EE')
+   +'</tr></table>'
+   +'<div style="font-size:12px;color:#666;margin-top:6px">Bestellmenge = Maximalbestand minus Bestand'+(d.maxFehlt?' (kein Maximalbestand erfasst, gerechnet mit 5)':'')+'.</div>'
+   +(lief.length?'<div style="font-size:13px;font-weight:bold;color:#1A5C1A;margin-top:18px;padding-bottom:4px;border-bottom:2px solid #1A5C1A">Beschaffung</div>'
+     +'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:4px"><tr style="background:#f4f5f3"><td style="'+F+'padding:6px 8px;font-size:12px;color:#666;width:40%">Lieferant</td><td style="'+F+'padding:6px 8px;font-size:12px;color:#666">Artikelnummer</td></tr>'+liefRows+'</table>'
+     :'<div style="font-size:13px;margin-top:18px;color:#666">Noch kein Lieferant und keine Artikelnummer erfasst.</div>')
+   +(e(d.bem)?'<div style="font-size:13px;margin-top:12px;background:#fff8e1;border-left:3px solid #f59e0b;padding:8px 10px"><b>Bemerkung:</b> '+e(d.bem)+'</div>':'')
+   +'</div><div style="font-size:11px;color:#888;padding:10px 18px;border-top:1px solid #eee;background:#fafafa">Gebucht von '+(e(d.person)||'–')+' · '+e(d.datum)+' · über '+e(d.quelle)+'<br>Automatische Meldung aus der ET-Liste, Tschopp Holzindustrie AG, Instandhaltung</div></div>';
+}
 async function sendeMail(et,neuerIst){
-  const bm=et.max-neuerIst;
+  const maxFehlt=!(et.max>0); const maxB=maxFehlt?5:et.max;
+  const bm=Math.max(0,maxB-neuerIst);
   const datum=new Date().toLocaleString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-  const html='<div style="font-family:Arial,sans-serif;max-width:560px;"><div style="background:#1A5C1A;color:#fff;padding:20px;border-radius:8px 8px 0 0;"><h2 style="margin:0;font-size:18px;">⚠️ Meldebestand erreicht</h2></div><div style="padding:20px;border:1px solid #ddd;border-top:none;border-radius:0 0 8px 8px;"><p><b>'+et.nr+'</b> – '+et.bez+'<br><small>Bereich: '+bereichVon(et.sheet||ET_SHEET)+' · '+et.anlage+'</small></p><p>Bestand: <b style="color:red;font-size:18px;">'+neuerIst+'</b> '+et.einheit+'<br>Mindest: '+et.min+' | Maximal: '+et.max+'<br><b>Bestellmenge: '+bm+' '+et.einheit+'</b></p><p>Lieferant: '+(et.lieferant||'–')+'<br>Art.-Nr.: '+(et.artNr||'–')+'<br>Lieferzeit: '+(et.lz||'–')+' Tage</p><p style="font-size:11px;color:#888;">👤 '+userName+' · '+datum+'</p></div></div>';
+  const html=mailHtml({bereich:bereichVon(et.sheet||ET_SHEET),nr:et.nr,bez:et.bez,anlage:et.anlage,lagerort:et.lagerort,lagerplatz:et.lagerplatz,
+    ist:neuerIst,min:et.min,bm,einheit:et.einheit||'Stk',maxFehlt,lief1:et.lieferant,art1:et.artNr,lief2:et.lieferant2,art2:et.artNr2,bem:et.bem,
+    person:userName||userEmail,datum,quelle:'die App'});
   const blatt=et.sheet||ET_SHEET; const e=mailMap[blatt]||{};
   let an=adressListe(e.an), cc=adressListe(e.cc);
   if(!an.length){ an=adressListe(mailStd.an); if(!cc.length) cc=adressListe(mailStd.cc); }
   if(!an.length){ an=adressListe(MAIL_TO); if(!cc.length) cc=adressListe(MAIL_CC); }
   try{
-    await gPost('/me/sendMail',{message:{subject:'⚠️ MELDEBESTAND ('+bereichVon(blatt)+'): '+et.nr+' – '+et.bez,
+    await gPost('/me/sendMail',{message:{subject:'Meldebestand '+bereichVon(blatt)+': '+et.nr+' '+(et.bez||''),
       body:{contentType:'HTML',content:html},
       toRecipients:an,
       ccRecipients:cc},saveToSentItems:true});
