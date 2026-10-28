@@ -492,38 +492,57 @@ async function afterLogin(){
   startScanner();
 }
 
-async function refreshToken(){
+let neuAnmeldungLaeuft=false;
+async function neuAnmelden(){
+  // Sitzung bei Microsoft abgelaufen: einmal neu anmelden (meist ohne Passwort)
+  if(neuAnmeldungLaeuft) return;
+  neuAnmeldungLaeuft=true;
+  try{ hideLoading(); }catch(x){}
+  toast('Sitzung abgelaufen, melde neu an…','err');
   const accs=msalInst.getAllAccounts();
-  if(accs.length>0){
-    try{
-      const sr=await msalInst.acquireTokenSilent({scopes:SCOPES,account:accs[0]});
-      token=sr.accessToken;
-    }catch(e){}
+  try{ await msalInst.acquireTokenRedirect({scopes:SCOPES,account:accs[0]}); }
+  catch(e){ try{ await msalInst.loginRedirect({scopes:SCOPES}); }catch(x){ showLogin(); } }
+}
+async function refreshToken(erzwingen){
+  const accs=msalInst.getAllAccounts();
+  if(accs.length===0){ await neuAnmelden(); throw new Error('Bitte neu anmelden'); }
+  try{
+    const sr=await msalInst.acquireTokenSilent({scopes:SCOPES,account:accs[0],forceRefresh:!!erzwingen});
+    token=sr.accessToken;
+  }catch(e){
+    await neuAnmelden();
+    throw new Error('Sitzung abgelaufen, bitte kurz warten');
+  }
+}
+async function gAnfrage(methode,url,body){
+  for(let versuch=0;versuch<2;versuch++){
+    await refreshToken(versuch>0);
+    const opt={method:methode,headers:{Authorization:'Bearer '+token}};
+    if(body!==undefined){ opt.headers['Content-Type']='application/json'; opt.body=JSON.stringify(body); }
+    const r=await fetch('https://graph.microsoft.com/v1.0'+url,opt);
+    if(r.status===401&&versuch===0) continue;   // Token abgelaufen: einmal frisch holen und wiederholen
+    if(r.status===401){ await neuAnmelden(); throw new Error('Sitzung abgelaufen, bitte kurz warten'); }
+    return r;
   }
 }
 async function gGet(url){
-  await refreshToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{headers:{Authorization:'Bearer '+token}});
+  const r=await gAnfrage('GET',url);
   if(!r.ok){const t=await r.text();throw new Error('GET '+r.status+' | '+t.substring(0,150));}
   return r.json();
 }
 async function gPatch(url,body){
-  await refreshToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{
-    method:'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
-    body:JSON.stringify(body)
-  });
+  const r=await gAnfrage('PATCH',url,body);
   if(!r.ok){const t=await r.text();throw new Error('PATCH '+r.status+' | '+t.substring(0,150));}
   return r.json();
 }
 async function gPost(url,body){
-  await refreshToken();
-  const r=await fetch('https://graph.microsoft.com/v1.0'+url,{
-    method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},
-    body:JSON.stringify(body)
-  });
+  const r=await gAnfrage('POST',url,body);
   return r.status;
 }
+// Wenn die App nach längerer Pause wieder geöffnet wird, Anmeldung gleich auffrischen
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&token){ refreshToken(false).catch(()=>{}); }
+});
 
 // ── DATEN ──
 async function ladeMailEmpfaenger(){
