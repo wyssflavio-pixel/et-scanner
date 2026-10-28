@@ -236,6 +236,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
     Mit Microsoft anmelden
   </button>
   <button class="btn-ghost" onclick="forceLogout()">🔄 Konten zurücksetzen</button>
+  <div style="position:absolute;bottom:18px;left:0;right:0;text-align:center;font-size:11px;color:#9aa59b;">Flavio Wyss</div>
 </div>
 
 <!-- MAIN -->
@@ -357,6 +358,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
       </div>
       <button class="btn btn-green" onclick="reloadData()" style="margin-bottom:8px;">🔄 ET-Daten neu laden</button>
       <button class="btn" style="background:var(--red);color:#fff;" onclick="logout()">🚪 Abmelden</button>
+      <div style="text-align:center;font-size:11px;color:#9aa59b;margin:18px 0 6px;line-height:1.6;">Flavio Wyss</div>
     </div>
 
   </div>
@@ -1026,9 +1028,9 @@ function mailHtml(d){
    +'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:16px"><tr>'
    +kasten('BESTAND',e(d.ist)+' '+e(d.einheit),'#B91C1C','1px solid #e2e2e2','#ffffff')
    +kasten('MELDEBESTAND',e(d.min)+' '+e(d.einheit),'#222222','1px solid #e2e2e2','#ffffff')
-   +kasten('BESTELLMENGE',e(d.bm)+' '+e(d.einheit),'#1A5C1A','2px solid #1A5C1A','#EEF5EE')
+   +(d.maxFehlt?kasten('BESTELLMENGE','festlegen','#1A5C1A','2px solid #1A5C1A','#EEF5EE').replace('font-size:24px','font-size:18px'):kasten('BESTELLMENGE',e(d.bm)+' '+e(d.einheit),'#1A5C1A','2px solid #1A5C1A','#EEF5EE'))
    +'</tr></table>'
-   +'<div style="font-size:12px;color:#666;margin-top:6px">Bestellmenge = Maximalbestand minus Bestand'+(d.maxFehlt?' (kein Maximalbestand erfasst, gerechnet mit 5)':'')+'.</div>'
+   +'<div style="font-size:12px;color:#666;margin-top:6px">'+(d.maxFehlt?'Kein Maximalbestand erfasst, bitte Bestellmenge selbst festlegen.':'Bestellmenge = Maximalbestand minus Bestand.')+'</div>'
    +(lief.length?'<div style="font-size:13px;font-weight:bold;color:#1A5C1A;margin-top:18px;padding-bottom:4px;border-bottom:2px solid #1A5C1A">Beschaffung</div>'
      +'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:4px"><tr style="background:#f4f5f3"><td style="'+F+'padding:6px 8px;font-size:12px;color:#666;width:40%">Lieferant</td><td style="'+F+'padding:6px 8px;font-size:12px;color:#666">Artikelnummer</td></tr>'+liefRows+'</table>'
      :'<div style="font-size:13px;margin-top:18px;color:#666">Noch kein Lieferant und keine Artikelnummer erfasst.</div>')
@@ -1036,8 +1038,8 @@ function mailHtml(d){
    +'</div><div style="font-size:11px;color:#888;padding:10px 18px;border-top:1px solid #eee;background:#fafafa">Gebucht von '+(e(d.person)||'–')+' · '+e(d.datum)+' · über '+e(d.quelle)+'<br>Automatische Meldung aus der ET-Liste, Tschopp Holzindustrie AG, Instandhaltung</div></div>';
 }
 async function sendeMail(et,neuerIst){
-  const maxFehlt=!(et.max>0); const maxB=maxFehlt?5:et.max;
-  const bm=Math.max(0,maxB-neuerIst);
+  const maxFehlt=!(et.max>0);
+  const bm=maxFehlt?'':Math.max(0,et.max-neuerIst);
   const datum=new Date().toLocaleString('de-CH',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
   const html=mailHtml({bereich:bereichVon(et.sheet||ET_SHEET),nr:et.nr,bez:et.bez,anlage:et.anlage,lagerort:et.lagerort,lagerplatz:et.lagerplatz,
     ist:neuerIst,min:et.min,bm,einheit:et.einheit||'Stk',maxFehlt,lief1:et.lieferant,art1:et.artNr,lief2:et.lieferant2,art2:et.artNr2,bem:et.bem,
