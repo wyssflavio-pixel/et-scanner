@@ -378,7 +378,7 @@ const SP_HOSTNAME = 'tschoppag.sharepoint.com';
 const SP_SITE_PATH = '/sites/Instandhaltung';
 const SP_FOLDER_PATH = '/Instandhaltung/ET-Liste';
 const SP_FILENAME = 'ET-Liste_Tschopp_Final V2.xlsm';
-const ET_SHEET = 'ET-Liste';      // Hauptblatt Plattenwerk (Rückfall, falls keine Blattliste kommt)
+const ET_SHEET = 'ET-Plattenwerk'; // Hauptblatt Plattenwerk (Rückfall, falls keine Blattliste kommt)
 const ET_SHEET_PREFIX = 'ET-';     // alle Blätter, deren Name so beginnt, werden gelesen
 const FIRST_ROW = 5;
 const MAIL_TO = 'christopher.nagel@tschopp.swiss';  // nur falls im Blatt "Mail-Empfänger" nichts steht
@@ -438,6 +438,7 @@ window.onload = async () => {
     await msalInst.initialize();
     const resp = await msalInst.handleRedirectPromise();
     if(resp){
+      msalInst.setActiveAccount(resp.account);
       token=resp.accessToken; userEmail=resp.account.username;
       userName=resp.account.name||userEmail.split('@')[0];
       await afterLogin();
@@ -445,9 +446,11 @@ window.onload = async () => {
       const accs = msalInst.getAllAccounts();
       if(accs.length>0){
         try{
-          const sr=await msalInst.acquireTokenSilent({scopes:SCOPES,account:accs[0]});
-          token=sr.accessToken; userEmail=accs[0].username;
-          userName=accs[0].name||userEmail.split('@')[0];
+          const konto=msalInst.getActiveAccount()||accs[0];
+          msalInst.setActiveAccount(konto);
+          const sr=await msalInst.acquireTokenSilent({scopes:SCOPES,account:konto});
+          token=sr.accessToken; userEmail=konto.username;
+          userName=konto.name||userEmail.split('@')[0];
           await afterLogin();
         }catch(e){ showLogin(); }
       } else { showLogin(); }
@@ -492,6 +495,11 @@ async function afterLogin(){
   startScanner();
 }
 
+function aktivesKonto(){
+  // immer das Konto der Person nehmen, die in der App angemeldet ist (nicht einfach das erste gespeicherte)
+  const accs=msalInst.getAllAccounts();
+  return msalInst.getActiveAccount()||accs.find(a=>userEmail&&a.username.toLowerCase()===userEmail.toLowerCase())||accs[0]||null;
+}
 let neuAnmeldungLaeuft=false;
 async function neuAnmelden(){
   // Sitzung bei Microsoft abgelaufen: einmal neu anmelden (meist ohne Passwort)
@@ -499,15 +507,15 @@ async function neuAnmelden(){
   neuAnmeldungLaeuft=true;
   try{ hideLoading(); }catch(x){}
   toast('Sitzung abgelaufen, melde neu an…','err');
-  const accs=msalInst.getAllAccounts();
-  try{ await msalInst.acquireTokenRedirect({scopes:SCOPES,account:accs[0]}); }
+  const konto=aktivesKonto();
+  try{ await msalInst.acquireTokenRedirect({scopes:SCOPES,account:konto||undefined}); }
   catch(e){ try{ await msalInst.loginRedirect({scopes:SCOPES}); }catch(x){ showLogin(); } }
 }
 async function refreshToken(erzwingen){
-  const accs=msalInst.getAllAccounts();
-  if(accs.length===0){ await neuAnmelden(); throw new Error('Bitte neu anmelden'); }
+  const konto=aktivesKonto();
+  if(!konto){ await neuAnmelden(); throw new Error('Bitte neu anmelden'); }
   try{
-    const sr=await msalInst.acquireTokenSilent({scopes:SCOPES,account:accs[0],forceRefresh:!!erzwingen});
+    const sr=await msalInst.acquireTokenSilent({scopes:SCOPES,account:konto,forceRefresh:!!erzwingen});
     token=sr.accessToken;
   }catch(e){
     await neuAnmelden();
@@ -554,10 +562,13 @@ async function ladeMailEmpfaenger(){
       const e={an:String(z[2]||'').trim(), cc:String(z[3]||'').trim(), bereich:String(z[1]||'').trim()};
       if(blatt.toUpperCase()==='STANDARD') mailStd=e; else mailMap[blatt]=e;
     });
+    // Plattenwerk-Blatt heisst neu ET-Plattenwerk (früher ET-Liste): beide Namen gelten
+    if(mailMap['ET-Liste']&&!mailMap['ET-Plattenwerk']) mailMap['ET-Plattenwerk']=mailMap['ET-Liste'];
+    if(mailMap['ET-Plattenwerk']&&!mailMap['ET-Liste']) mailMap['ET-Liste']=mailMap['ET-Plattenwerk'];
   }catch(e){ /* Blatt fehlt: Rückfall auf MAIL_TO */ }
 }
 function adressListe(s){ return String(s||'').split(/[;,\s]+/).map(a=>a.trim()).filter(a=>a.includes('@')).map(a=>({emailAddress:{address:a}})); }
-function bereichVon(sh){ const e=mailMap[sh]; if(e&&e.bereich) return e.bereich; return (sh===ET_SHEET||!sh)?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length); }
+function bereichVon(sh){ const e=mailMap[sh]; if(e&&e.bereich) return e.bereich; return (sh===ET_SHEET||sh==='ET-Liste'||!sh)?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length); }
 
 // ── BUCHUNGSPROTOKOLL ──
 let logRows=[], logOk=false, histFilter='Alle', bereichListe=[];
@@ -668,7 +679,7 @@ async function loadETData(){
         etData[nrStr.toUpperCase()]=obj;
         count++; c++;
       }
-      proBlatt.push((sh===ET_SHEET?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length))+': '+c);
+      proBlatt.push((sh===ET_SHEET||sh==='ET-Liste'?'Plattenwerk':sh.substring(ET_SHEET_PREFIX.length))+': '+c);
     }
     document.getElementById('info-count').textContent='✅ '+count+' ET-Teile geladen ('+proBlatt.join(' · ')+')';
     bereichListe=sheets.map(bereichVon);
