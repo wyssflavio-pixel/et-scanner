@@ -63,6 +63,28 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
 .scanner-status{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.65);color:#fff;text-align:center;padding:10px;font-size:13px;font-weight:500;}
 .scanner-status.detecting{background:rgba(230,81,0,.85);}
 .scanner-status.found{background:rgba(26,92,26,.9);}
+.scan-confirm{position:absolute;left:10px;right:10px;bottom:10px;background:#fff;border-radius:14px;padding:14px 14px 12px;box-shadow:0 6px 20px rgba(0,0,0,.35);display:none;z-index:5;}
+.scan-confirm.on{display:block;animation:scIn .18s ease-out;}
+@keyframes scIn{from{transform:translateY(12px);opacity:0}to{transform:none;opacity:1}}
+.sc-nr{font:600 13px ui-monospace,Menlo,Consolas,monospace;color:#2E7D32;letter-spacing:.5px;}
+.sc-bez{font-size:17px;font-weight:700;color:#111;margin:3px 0 2px;line-height:1.25;}
+.sc-ort{font-size:13px;color:#666;}
+.sc-btns{display:flex;gap:8px;margin-top:12px;}
+.sc-btns button{flex:1;padding:14px 8px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;}
+.sc-ok{background:#1A5C1A;color:#fff;}
+.sc-no{background:#ECEFEC;color:#333;}
+.modus{display:flex;align-items:center;gap:10px;margin:0 0 12px;}
+.modus-lbl{font-size:13px;color:#555;font-weight:600;flex:none;}
+.modus-seg{flex:1;display:flex;background:#E4E9E4;border-radius:12px;padding:3px;}
+.modus-seg button{flex:1;border:none;background:transparent;border-radius:9px;padding:10px 6px;font-size:14px;font-weight:700;color:#5b665b;cursor:pointer;}
+.modus-seg button.on{background:#fff;color:#1A5C1A;box-shadow:0 1px 3px rgba(0,0,0,.18);}
+.set-row{display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;}
+.set-txt b{display:block;font-size:15px;color:#1A5C1A;}
+.set-txt span{display:block;font-size:12.5px;color:#777;margin-top:2px;line-height:1.4;}
+.schalter{flex:none;width:52px;height:30px;border-radius:15px;background:#cfd6cf;position:relative;transition:background .2s;}
+.schalter:after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:12px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:left .2s;}
+.schalter.an{background:#2E7D32;}
+.schalter.an:after{left:25px;}
 
 /* MANUAL */
 .manual-row{display:flex;gap:8px;margin-bottom:12px;}
@@ -260,6 +282,22 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--grey);min-heig
           <div class="sf-corner sf-br"></div>
           <div class="scan-line"></div>
           <div class="scanner-status" id="scan-status">Halte QR-Code in den Rahmen…</div>
+          <div class="scan-confirm" id="scan-confirm">
+            <div class="sc-nr" id="sc-nr"></div>
+            <div class="sc-bez" id="sc-bez"></div>
+            <div class="sc-ort" id="sc-ort"></div>
+            <div class="sc-btns">
+              <button class="sc-no" onclick="scanVerwerfen()">Anderes Teil</button>
+              <button class="sc-ok" onclick="scanOeffnen()">Öffnen</button>
+            </div>
+          </div>
+        </div>
+        <div class="modus">
+          <span class="modus-lbl">Nach dem Scan:</span>
+          <div class="modus-seg">
+            <button id="modus-frage" onclick="bestaetigenSetzen(true)">Zuerst fragen</button>
+            <button id="modus-sofort" onclick="bestaetigenSetzen(false)">Sofort öffnen</button>
+          </div>
         </div>
         <div class="manual-row">
           <input type="text" id="manual-et" placeholder="ET-Nr oder Bezeichnung" oninput="sucheLive()" onkeydown="if(event.key==='Enter'){event.preventDefault();manualSearch();}" autocomplete="off" />
@@ -406,6 +444,20 @@ let codeReader=null;
 const COOLDOWN_MS = 2500;
 const CONFIRM_COUNT = 1; // sofort beim ersten Erkennen
 let consecutiveCount=0, lastRawCode='';
+// Bestätigung nach dem Scannen: erkanntes Teil wird zuerst angezeigt, erst "Öffnen" öffnet es
+let scanKandidat=null, ignoriereCode='', ignoriereBis=0;
+// Einstellung pro Handy: true = bestätigen (Standard), false = sofort öffnen
+function bestaetigenAn(){ try{ return localStorage.getItem('etBestaetigen')!=='nein'; }catch(e){ return true; } }
+function bestaetigenAnzeigen(){
+  const an=bestaetigenAn();
+  const f=document.getElementById('modus-frage'), s=document.getElementById('modus-sofort');
+  if(f) f.classList.toggle('on',an);
+  if(s) s.classList.toggle('on',!an);
+}
+function bestaetigenSetzen(an){
+  try{ localStorage.setItem('etBestaetigen',an?'ja':'nein'); }catch(e){}
+  bestaetigenAnzeigen();
+}
 let cooldownActive=false, cooldownTimer=null;
 
 function startCooldown(){
@@ -426,6 +478,9 @@ function setScanStatus(txt, cls){
 }
 function resetScannerState(){
   consecutiveCount=0; lastRawCode='';
+  scanKandidat=null; ignoriereBis=0;
+  const sc=document.getElementById('scan-confirm'); if(sc) sc.classList.remove('on');
+  bestaetigenAnzeigen();
   clearCooldown();
   setScanStatus('Halte QR-Code in den Rahmen…','');
 }
@@ -715,10 +770,11 @@ function startScanner(){
       }
     };
     codeReader.decodeFromConstraints(constraints,'qr-video',(result,err)=>{
-      if(currentET||cooldownActive) return;
+      if(currentET||cooldownActive||scanKandidat) return;
       if(result){
         const text=result.getText().trim();
         if(!text) return;
+        if(text===ignoriereCode&&Date.now()<ignoriereBis) return; // eben verworfenes Etikett kurz ignorieren
         if(text===lastRawCode){
           consecutiveCount++;
         } else {
@@ -726,7 +782,7 @@ function startScanner(){
           consecutiveCount=1;
         }
         setScanStatus('🔍 '+text,'detecting');
-        if(consecutiveCount>=CONFIRM_COUNT) processCode(text);
+        if(consecutiveCount>=CONFIRM_COUNT) processCode(text,true);
       } else {
         if(lastRawCode){
           consecutiveCount=0; lastRawCode='';
@@ -739,7 +795,7 @@ function startScanner(){
   }
 }
 
-function processCode(qrData){
+function processCode(qrData,vomScanner){
   if(!qrData||currentET||cooldownActive){ ansichtQuelle='scan'; return; }
   startCooldown();
   const raw=qrData.trim();
@@ -758,11 +814,41 @@ function processCode(qrData){
     navigator.vibrate&&navigator.vibrate([100,50,100]);
     return;
   }
+  if(vomScanner&&bestaetigenAn()){
+    // nicht sofort öffnen: Teil anzeigen und bestätigen lassen
+    scanKandidat=et; ignoriereCode=raw;
+    clearCooldown();
+    navigator.vibrate&&navigator.vibrate(60);
+    document.getElementById('sc-nr').textContent=et.nr+(et.sheet?'  ·  '+bereichVon(et.sheet):'');
+    document.getElementById('sc-bez').textContent=et.bez||'(ohne Bezeichnung)';
+    document.getElementById('sc-ort').textContent=[et.anlage,[et.lagerort,et.lagerplatz].filter(Boolean).join(' ')].filter(Boolean).join('  ·  ');
+    document.getElementById('scan-confirm').classList.add('on');
+    setScanStatus('','');
+    return;
+  }
   navigator.vibrate&&navigator.vibrate([80,40,160]);
   if(codeReader){try{codeReader.reset();}catch(e){} codeReader=null;}
   currentET=et; menge=1; buchTyp='abgang';
   setScanStatus('✅ '+et.nr,'found');
   zeigET(et);
+}
+
+function scanOeffnen(){
+  const et=scanKandidat; if(!et) return;
+  scanKandidat=null;
+  document.getElementById('scan-confirm').classList.remove('on');
+  navigator.vibrate&&navigator.vibrate([80,40,160]);
+  if(codeReader){try{codeReader.reset();}catch(e){} codeReader=null;}
+  currentET=et; menge=1; buchTyp='abgang'; ansichtQuelle='scan';
+  setScanStatus('✅ '+et.nr,'found');
+  zeigET(et);
+}
+function scanVerwerfen(){
+  scanKandidat=null;
+  ignoriereBis=Date.now()+4000;   // dasselbe Etikett 4 Sekunden ignorieren
+  consecutiveCount=0; lastRawCode='';
+  document.getElementById('scan-confirm').classList.remove('on');
+  setScanStatus('Richte die Kamera auf das richtige Etikett…','');
 }
 
 function manualSearch(){
